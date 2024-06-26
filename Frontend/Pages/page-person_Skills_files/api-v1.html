@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<!-- saved from url=(0027)https://framer.com/m/api-v1 -->
+<html><input type="hidden" id="__yoroi_connector_api_injected_type" value="nightly"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+</head>
+<body>
+<script>
+class Publisher {
+	#handler
+	#subs = new Set()
+
+	constructor(handler) {
+		this.#handler = handler
+	}
+
+	add(id, source, origin, args) {
+		this.#subs.add({ id, source, origin })
+		if (this.#subs.size === 1 && this.#handler && this.#handler.active) {
+			this.#handler.active()
+		}
+	}
+
+	remove(id, source) {
+		if (this.#subs.size === 0) return
+		for (const sub of this.#subs) {
+			if (sub.id === id && sub.source === source) {
+				this.#subs.delete(sub)
+			}
+		}
+		if (this.#subs.size === 0 && this.#handler && this.#handler.inactive) {
+			this.#handler.inactive()
+		}
+	}
+
+	publish(value) {
+		for (const sub of this.#subs) {
+			try {
+				sub.source.postMessage({ id: sub.id, value }, sub.origin)
+			} catch {
+				this.#subs.delete(sub)
+			}
+		}
+	}
+}
+
+addEventListener("message", async event => {
+	if (!event.origin.startsWith("https://")) return
+	if (event.origin !== "https://framer.com" && !event.origin.endsWith(".framer.com")) return
+	try {
+		const { id, method } = event.data
+		if (typeof id !== "number" || typeof method !== "string") {
+			throw Error("invalid id/method")
+		}
+		if (!api[method]) throw Error("method does not exist")
+		if (api[method] instanceof Publisher) {
+			if (event.data.unsubscribe === true) {
+				api[method].remove(id, event.source)
+			} else {
+				api[method].add(id, event.source, event.origin)
+				event.source.postMessage({ id, subscribed: true }, event.origin)
+			}
+		} else {
+			const { args } = event.data
+			if (!Array.isArray(args)) throw Error("invalid/missing arguments")
+			try {
+				const value = await api[method](...args)
+				event.source.postMessage({ id, value }, event.origin)
+			} catch (err) {
+				event.source.postMessage({ id, error: err.message }, event.origin)
+			}
+		}
+	} catch (err) {
+	}
+})
+
+const api = {
+	getItem() {
+		return parseItem()
+	},
+	setItem(item) {
+		storeItem(item)
+		api.subscribe.publish(item)
+	},
+	subscribe: new Publisher({
+		active() {
+			addEventListener("storage", storageListener)
+		},
+		inactive() {
+			removeEventListener("storage", storageListener)
+		}
+	})
+}
+
+const localStorageKey = "framer-module-page-item"
+
+function storageListener(event) {
+	if (event.key !== localStorageKey) return
+	const item = parseItem(event.newValue)
+	api.subscribe.publish(item)
+}
+
+function parseItem(value = localStorage.getItem(localStorageKey)) {
+	try {
+		const { exportSpecifier, module, version } = JSON.parse(value)
+		if (version !== 1 || !exportSpecifier || !module) throw Error("Invalid value")
+		return { exportSpecifier, module }
+	} catch {
+		return null
+	}
+}
+
+function storeItem(item) {
+	if (!item) {
+		localStorage.setItem(localStorageKey, JSON.stringify({ version: 1 }))
+		return
+	}
+	const { exportSpecifier, module } = item
+	if (!exportSpecifier || !module) throw Error("Invalid value")
+	localStorage.setItem(localStorageKey, JSON.stringify({ exportSpecifier, module, version: 1 }))
+}
+</script>
+
+</body></html>
